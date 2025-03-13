@@ -1,5 +1,6 @@
 package com.dinh.myfirstkmm.android.ui.screen
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -16,6 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.compamy.robortc.util.VerticalWheelPicker
@@ -23,8 +26,10 @@ import com.compamy.robortc.util.VirtualJoystick
 import com.compamy.robortc.util.VirtualJoystick3D
 import com.dinh.myfirstkmm.android.ui.MainViewModel
 import com.dinh.myfirstkmm.android.ui.UserAction
+import com.dinh.myfirstkmm.android.ui.component.BaseState
 import com.dinh.myfirstkmm.android.ui.component.RoboRemoteVideoScreen
 import com.ronin.horizontal_wheel_picker.HorizontalWheelPicker
+import kotlinx.coroutines.flow.collectLatest
 import org.webrtc.EglBase
 import org.webrtc.MediaStream
 import org.webrtc.PeerConnectionFactory
@@ -38,7 +43,7 @@ fun HomeScreen(
     viewModel: MainViewModel = hiltViewModel(),
 ) {
     viewModel.setUserAndRoom("123", "webrtcAndroid")
-    val remoteStream by viewModel.remoteStream.collectAsState()
+    val remoteStream by viewModel.output.remoteStream.collectAsState()
 
     val onLeftJoystickMove: (Float, Float, Float) -> Unit = { x, y, r ->
         viewModel.handleAction(UserAction.leftJoystickMove(x, y, r))
@@ -73,6 +78,29 @@ fun HomeLandscape(
     onInitPere: () -> Unit,
     remoteStream: Array<out MediaStream>,
 ) {
+    val context = LocalContext.current
+
+    LaunchedEffect(key1 = viewModel.notification) {
+
+        viewModel.notification.collectLatest {
+            when (it) {
+                is BaseState.Error -> Toast.makeText(
+                    context,
+                    "Error:" + it.mess,
+                    Toast.LENGTH_SHORT
+                ).show()
+
+
+                is BaseState.Message -> Toast.makeText(
+                    context,
+                    it.mess,
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+
+    }
+
 
     var phi by remember {
         mutableStateOf(0)

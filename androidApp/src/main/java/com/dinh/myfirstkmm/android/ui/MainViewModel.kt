@@ -3,6 +3,7 @@ package com.dinh.myfirstkmm.android.ui
 import android.content.Context
 import android.util.Log
 import androidx.lifecycle.viewModelScope
+import com.dinh.myfirstkmm.android.ui.component.BaseOutput
 import com.dinh.myfirstkmm.android.ui.component.BaseViewModel
 import com.dinh.myfirstkmm.android.ui.webrtc.PeerConnectionClient
 import com.dinh.myfirstkmm.datasource.Signal
@@ -12,9 +13,14 @@ import com.dinh.myfirstkmm.domain.RoboMoveCommandPayload
 import com.squareup.moshi.Moshi
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -36,31 +42,76 @@ sealed class UserAction() {
     object onStopControl : UserAction()
 }
 
+interface Output : BaseOutput {
+    val remoteStream: StateFlow<Array<MediaStream>>
+}
+
 @HiltViewModel
 class MainViewModel @Inject constructor(
     @ApplicationContext private val context: Context, private val moshi: Moshi
-) : BaseViewModel() {
+) : BaseViewModel(), Output {
 
-    private var roomName = "123"
-    private var userName = "webrtcAndroid"
+    override val output: Output
+        get() = this
 
-    fun setUserAndRoom(room:String,user:String)
-    {
-        roomName =room
-        userName=user
-
-    }
-
-
-    private var peerConnectionClient: PeerConnectionClient? = null
-    private var signal: Signal? = null
 
     private var _remoteStream = MutableStateFlow<Array<out MediaStream>>(emptyArray())
-    val remoteStream: StateFlow<Array<MediaStream>> = _remoteStream.map {
+    override val remoteStream: StateFlow<Array<MediaStream>> = _remoteStream.map {
         it.filterNotNull().toTypedArray()
     }.stateIn(
         scope = viewModelScope, started = SharingStarted.Lazily, initialValue = emptyArray()
     )
+
+    private val _rightAction: MutableSharedFlow<UserAction.rightJoystickMove> = MutableSharedFlow()
+    private val rightAction = _rightAction
+
+    private val _leftAction: MutableSharedFlow<UserAction.leftJoystickMove> = MutableSharedFlow()
+    private val leftAction = _leftAction
+
+    init {
+
+        viewModelScope.launch(CoroutineExceptionHandler { coroutineContext, throwable ->
+            showError("rightAction:" + throwable.toString())
+        }) {
+            rightAction.debounce(100).distinctUntilChanged().collectLatest {
+
+                val payload = RoboHeadTurnCommandPayload(phi = it.phi, theta = it.theta)
+
+                val jsonPayload =
+                    moshi.adapter(RoboHeadTurnCommandPayload::class.java).toJson(payload)
+                Log.d("JOYSTICK_3D", "${jsonPayload}")
+                peerConnectionClient?.sendPayload(jsonPayload)
+
+            }
+        }
+
+        viewModelScope.launch(CoroutineExceptionHandler { coroutineContext, throwable ->
+            showError("leftAction:" + throwable.toString())
+        }) {
+            leftAction.debounce(50).collectLatest {
+                val payload = RoboMoveCommandPayload(
+                    "LEFT", it.x, it.y, it.r
+                )
+                val jsonPayload = moshi.adapter(RoboMoveCommandPayload::class.java).toJson(payload)
+                peerConnectionClient?.sendPayload(jsonPayload)
+
+            }
+        }
+
+
+    }
+
+    private var roomName = "123"
+    private var userName = "webrtcAndroid"
+
+    fun setUserAndRoom(room: String, user: String) {
+        roomName = room
+        userName = user
+
+    }
+
+    private var peerConnectionClient: PeerConnectionClient? = null
+    private var signal: Signal? = null
 
     private var peerConnectionFactory: PeerConnectionFactory? = null
     private var rootEglBase: EglBase? = null
@@ -100,12 +151,7 @@ class MainViewModel @Inject constructor(
                     viewModelScope.launch {
                         _remoteStream.value = it
                     }
-                },
-                localVideoTrack,
-                signal = this,
-                peerConnectionFactory,
-                roomName,
-                userName
+                }, localVideoTrack, signal = this, peerConnectionFactory, roomName, userName
             )
             this.initConnection()
         }
@@ -176,30 +222,30 @@ class MainViewModel @Inject constructor(
     fun handleAction(userAction: UserAction) {
         when (userAction) {
             is UserAction.leftJoystickMove -> {
-
-                val payload = RoboMoveCommandPayload(
-                    "LEFT", userAction.x, userAction.y, userAction.r
-
-                )
-                val jsonPayload = moshi.adapter(RoboMoveCommandPayload::class.java).toJson(payload)
-                peerConnectionClient?.sendPayload(jsonPayload)
+                updateLeftJoyStick(action = userAction)
             }
 
             is UserAction.rightJoystickMove -> {
-
-                val payload =
-                    RoboHeadTurnCommandPayload(phi = userAction.phi, theta = userAction.theta)
-
-                val jsonPayload =
-                    moshi.adapter(RoboHeadTurnCommandPayload::class.java).toJson(payload)
-                Log.d("JOYSTICK_3D", "${jsonPayload}")
-                peerConnectionClient?.sendPayload(jsonPayload)
+                updateRightJoyStick(action = userAction)
             }
 
             UserAction.onStopControl -> {
                 peerConnectionClient?.cleanupResource()
             }
         }
+    }
+
+    fun updateRightJoyStick(action: UserAction.rightJoystickMove) {
+        viewModelScope.launch {
+            _rightAction.emit(action)
+        }
+    }
+
+    fun updateLeftJoyStick(action: UserAction.leftJoystickMove) {
+        viewModelScope.launch {
+            _leftAction.emit(action)
+        }
+
     }
 
 
